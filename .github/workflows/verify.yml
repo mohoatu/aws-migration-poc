@@ -1,0 +1,96 @@
+# This project is an argument, not a program.
+#
+# What it demonstrates is a method: a 7Rs disposition, a target architecture,
+# a cutover runbook with rollback triggers, success criteria, a risk register,
+# and a parallel run that returns GO or NO-GO. The value is in whether the
+# reasoning holds, and no CI job can check that.
+#
+# So this workflow is deliberately small, and says what it is. It checks the
+# two things a machine genuinely can: that the code still compiles and starts,
+# and that every path referenced by the documents still exists. The second
+# matters more here than in most repositories, because the documents *are* the
+# deliverable, and a cutover runbook that points at a file nobody can find is
+# worse than no runbook.
+#
+# It does not pretend to be a test suite. Adding one is tracked as fleet gap 7
+# and ranked last on purpose.
+
+name: verify
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: the code compiles and the CLI starts
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      # Compile every tracked source. This catches a syntax error and a
+      # version incompatibility, which is the floor, not the ceiling.
+      - name: Byte-compile every tracked Python file
+        shell: bash
+        run: |
+          files=$(git ls-files '*.py')
+          if [ -z "$files" ]; then echo "No Python files tracked."; exit 0; fi
+          echo "$files"
+          python -m py_compile $files
+          echo "All compile."
+
+      # --help exercises imports and argument parsing without touching AWS,
+      # moto, or the network.
+      - name: run_cutover.py --help
+        run: python run_cutover.py --help
+
+  documents:
+    name: every documented path still exists
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Check markdown references
+        shell: python
+        run: |
+          import re, sys
+          from pathlib import Path
+
+          root = Path(".")
+          broken, checked = [], 0
+          link = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
+
+          for doc in sorted(root.rglob("*.md")):
+              if ".git" in doc.parts or ".venv" in doc.parts:
+                  continue
+              for target in link.findall(doc.read_text(encoding="utf-8")):
+                  if target.startswith(("http://", "https://", "mailto:", "#")):
+                      continue
+                  checked += 1
+                  path = (doc.parent / target.split("#")[0]).resolve()
+                  if not path.exists():
+                      broken.append(f"{doc} -> {target}")
+
+          print(f"{checked} document references checked")
+          if broken:
+              print("\nBROKEN:")
+              for item in broken:
+                  print(" ", item)
+              sys.exit(1)
+          print("All of them resolve.")
