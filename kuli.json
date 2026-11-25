@@ -1,0 +1,7 @@
+{
+  "tier": "B",
+  "note": "Three Python files. Duplication is high because worker.py is a faithful port of the Perl original - that is the point of the project, not a defect.",
+  "skip": [],
+  "allowances": {},
+  "exceptions": {}
+}
